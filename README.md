@@ -134,6 +134,47 @@ of burning through the list. `--proxy` and `--proxy-file` are mutually
 exclusive. Keep proxy files containing credentials readable only by you
 (`chmod 600 proxies.txt`).
 
+### Refreshing the proxy list
+
+The repository ships source lists in `https_proxy_list.txt` and
+`socks5_proxy_list.txt`. The refresher resolves those sources, validates each
+proxy and writes a flat list that `--proxy-file` can read:
+
+```bash
+1fichier-dl-refresh-proxies --output proxies-fresh.txt
+```
+
+Useful options:
+
+| Option | Description |
+| --- | --- |
+| `--limit N` | Test only the first N candidates. |
+| `--max N` | Stop after finding N working proxies. |
+| `--workers N` | Parallel validations (default: `100`). |
+| `--timeout SECONDS` | Per-request timeout (default: `8`). |
+| `--source-file FILE` | Use a custom source file (repeatable). |
+| `--source URL` | Add a source URL or direct proxy (repeatable). |
+| `--shuffle` | Shuffle candidates before testing. |
+
+By default each proxy only has to load the 1fichier home page. To require a real
+download from a specific file link, pass the link and `--check-download`:
+
+```bash
+1fichier-dl-refresh-proxies \
+  --test-url 'https://1fichier.com/?FILE_ID' \
+  --check-download \
+  --max 3 \
+  --output proxies-download.txt
+```
+
+`--check-download` requests a direct link and reads one byte, so it consumes
+that proxy's free-download window. Add `--password` if the file is protected.
+
+A source file can contain raw list URLs (like the bundled files) or direct
+proxies. Free proxies are ephemeral and often become rate-limited within
+minutes: run the refresher again when the list goes stale. For large files a
+VPN or a Premium account is still the reliable option.
+
 ## GUI (legacy)
 
 The original PyQt5 interface is still available from a checkout:
