@@ -40,6 +40,7 @@ dev = [
 [project.scripts]
 1fichier-dl = "core.cli.main:main"
 1fichier-dl-cli = "core.cli.main:main"
+1fichier-dl-refresh-proxies = "core.proxies.refresh:main"
 
 [tool.setuptools.packages.find]
 include = ["core*"]
