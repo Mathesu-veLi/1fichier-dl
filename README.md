@@ -90,6 +90,8 @@ pip install -e .
 | `--proxy URL` | HTTP or SOCKS proxy, for example `socks5h://127.0.0.1:1080`. |
 | `--proxy-file FILE` | Proxies to try in order, one per line. |
 | `--overwrite` | Replace an existing complete file. |
+| `--aria2c` | Transfer with aria2c after resolving the direct link. |
+| `--aria2c-connections N` | aria2c connections per server (default: `8`). |
 | `-v, --verbose` | Show debug logging. |
 | `--version` | Print the installed version. |
 
@@ -100,6 +102,33 @@ finishes. Run the same command again to resume from the current offset (the
 server must support HTTP range requests). If a complete file with the same name
 exists and its size matches the server, the download is skipped; otherwise the
 CLI refuses to replace it unless `--overwrite` is passed.
+
+### Downloading with aria2c
+
+The Python process still resolves the 1fichier page and obtains the temporary
+direct link; `aria2c` only handles the transfer. Install it first:
+
+```bash
+sudo pacman -S --needed aria2
+```
+
+```bash
+1fichier-dl --aria2c --aria2c-connections 16 -o ~/Downloads \
+  'https://1fichier.com/?lthdkhtjbln0v29ugixt'
+```
+
+aria2c adds multi-connection downloads and its own resume support. The CLI
+passes the `Referer`, user agent, cookies and the selected proxy to aria2c.
+Existing `.unfinished` files are migrated so aria2c can continue them.
+
+Two limitations matter:
+
+- aria2c does **not** bypass the 1fichier wait. The rate limit happens before
+  the direct link is generated, so if the CLI reports a wait, aria2c never
+  starts. Use a proxy/VPN or wait first.
+- aria2c only understands HTTP(S) proxies. With a SOCKS5 proxy, use the
+  built-in downloader or put an HTTP-to-SOCKS bridge in front of aria2c. The
+  CLI reports this instead of silently failing.
 
 ### 1fichier rate limits
 
