@@ -87,6 +87,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="replace a file that already exists",
     )
     parser.add_argument(
+        "--aria2c",
+        action="store_true",
+        help="hand the transfer to aria2c after resolving the direct link",
+    )
+    parser.add_argument(
+        "--aria2c-connections",
+        type=int,
+        default=8,
+        metavar="N",
+        help="parallel connections per server for aria2c (default: %(default)s)",
+    )
+    parser.add_argument(
         "-v",
         "--verbose",
         action="store_true",
@@ -230,6 +242,8 @@ def _download_one(
                 password=password,
                 proxy=proxy,
                 overwrite=args.overwrite,
+                aria2c=args.aria2c,
+                aria2c_connections=args.aria2c_connections,
             )
             try:
                 result = downloader.download(link, filename=name)
@@ -254,7 +268,11 @@ def _download_one(
                 print("Incorrect password, try again.", file=sys.stderr)
                 password = getpass.getpass("Password: ")
                 continue
-            except (engine.LinkUnavailable, engine.DestinationExists) as exc:
+            except (
+                engine.LinkUnavailable,
+                engine.DestinationExists,
+                engine.Aria2Unavailable,
+            ) as exc:
                 print(f"error: {exc}", file=sys.stderr)
                 return False
             except engine.DownloadError as exc:
@@ -298,6 +316,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     if args.filename and len(args.links) > 1:
         parser.error("--filename can only be used with a single link")
+    if args.aria2c_connections < 1:
+        parser.error("--aria2c-connections must be at least 1")
 
     proxies: Optional[list[str]] = None
     if args.proxy_file:

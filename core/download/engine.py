@@ -11,10 +11,12 @@ from __future__ import annotations
 import logging
 import os
 import re
+import shutil
+import subprocess
 import time
 from dataclasses import dataclass
 from typing import Optional
-from urllib.parse import unquote
+from urllib.parse import unquote, urlparse
 
 import lxml.html
 import requests
@@ -56,6 +58,10 @@ class LinkUnavailable(DownloadError):
 
 class DestinationExists(DownloadError):
     """A complete file with the target name already exists."""
+
+
+class Aria2Unavailable(DownloadError):
+    """The aria2c executable is not available on this system."""
 
 
 class RateLimited(DownloadError):
@@ -260,6 +266,9 @@ class Downloader:
         password: Optional[str] = None,
         proxy: Optional[str] = None,
         overwrite: bool = False,
+        aria2c: bool = False,
+        aria2c_path: str = "aria2c",
+        aria2c_connections: int = 8,
     ) -> None:
         self.output_dir = os.path.abspath(os.path.expanduser(output_dir))
         self.timeout = timeout
@@ -268,6 +277,9 @@ class Downloader:
         self.password = password
         self.proxy = proxy
         self.overwrite = overwrite
+        self.aria2c = aria2c
+        self.aria2c_path = aria2c_path
+        self.aria2c_connections = max(1, int(aria2c_connections))
 
     @property
     def proxies(self) -> Optional[dict[str, str]]:
@@ -305,8 +317,8 @@ class Downloader:
         _raise_for_error_page(response.text)
         raise DownloadError("1fichier did not return a direct download link")
 
-    def download(self, url: str, filename: Optional[str] = None) -> DownloadResult:
-        """Download ``url`` into :attr:`output_dir` and return the result."""
+    def _prepare(self, url: str) -> tuple[str, FileInfo, str, float]:
+        """Resolve file information and a temporary direct download link."""
         url = normalize_link(url)
         started = time.time()
 
@@ -324,6 +336,151 @@ class Downloader:
 
         self.reporter.on_status("Requesting a direct download link")
         direct_link = self._request_direct_link(url)
+        return url, info, direct_link, started
+
+    def _probe_filename(self, direct_link: str, referer: str) -> Optional[str]:
+        """Read Content-Disposition from the direct link when the page has no name."""
+        session = self._get_session(referer)
+        response = None
+        try:
+            response = session.get(
+                direct_link,
+                stream=True,
+                timeout=self.timeout,
+                headers={"Referer": referer},
+                proxies=self.proxies,
+            )
+            if response.status_code >= 400:
+                return None
+            return _filename_from_disposition(
+                response.headers.get("Content-Disposition")
+            )
+        except requests.RequestException:
+            return None
+        finally:
+            if response is not None:
+                response.close()
+
+    def _download_with_aria2c(
+        self, url: str, filename: Optional[str] = None
+    ) -> DownloadResult:
+        """Resolve the 1fichier link and hand the transfer to aria2c."""
+        if not shutil.which(self.aria2c_path):
+            raise Aria2Unavailable(
+                "aria2c was not found; install aria2 or use the built-in downloader"
+            )
+
+        proxy = self.proxy
+        if proxy:
+            scheme = urlparse(proxy).scheme.lower()
+            if scheme in ("socks5", "socks5h"):
+                raise DownloadError(
+                    "aria2c does not support SOCKS proxies; "
+                    "use the built-in downloader or an HTTP proxy tunnel"
+                )
+            if not scheme:
+                proxy = f"http://{proxy}"
+
+        url, info, direct_link, started = self._prepare(url)
+        session = self._get_session(url)
+
+        os.makedirs(self.output_dir, exist_ok=True)
+        name = os.path.basename(filename or info.name or "") or None
+        if not name:
+            name = os.path.basename(
+                self._probe_filename(direct_link, url) or ""
+            ) or "download.bin"
+        target = os.path.join(self.output_dir, name)
+        control = f"{target}.aria2"
+        part = f"{target}.unfinished"
+
+        if self.overwrite:
+            for path in (target, control, part):
+                if os.path.exists(path):
+                    os.remove(path)
+
+        if os.path.exists(target) and not self.overwrite:
+            current_size = os.path.getsize(target)
+            if info.size and current_size == info.size:
+                self.reporter.on_status(f"Already downloaded: {name}")
+                result = DownloadResult(
+                    path=target,
+                    size=current_size,
+                    elapsed=time.time() - started,
+                    skipped=True,
+                )
+                self.reporter.on_complete(result)
+                return result
+
+            resumable = os.path.exists(control) or (
+                info.size is not None and current_size < info.size
+            )
+            if not resumable:
+                raise DestinationExists(
+                    f"{target} already exists; pass --overwrite to replace it"
+                )
+
+        if not os.path.exists(target) and os.path.exists(part):
+            os.replace(part, target)
+            self.reporter.on_status(
+                f"Resuming {name} at {os.path.getsize(target)} bytes"
+            )
+
+        cmd = [
+            self.aria2c_path,
+            f"--dir={self.output_dir}",
+            f"--out={name}",
+            "--continue=true",
+            "--allow-overwrite=true",
+            "--auto-file-renaming=false",
+            "--file-allocation=none",
+            f"--max-connection-per-server={self.aria2c_connections}",
+            f"--split={self.aria2c_connections}",
+            "--min-split-size=1M",
+            "--max-tries=5",
+            "--retry-wait=2",
+            f"--connect-timeout={self.timeout}",
+            f"--timeout={self.timeout}",
+            "--summary-interval=5",
+            "--console-log-level=notice",
+            f"--user-agent={USER_AGENT}",
+            f"--referer={url}",
+        ]
+        if proxy:
+            cmd.append(f"--all-proxy={proxy}")
+
+        cookies = session.cookies.get_dict()
+        if cookies:
+            cmd.append(
+                "--header=Cookie: "
+                + "; ".join(f"{key}={value}" for key, value in cookies.items())
+            )
+
+        cmd.append(direct_link)
+
+        self.reporter.on_status(f"Starting aria2c for {name}")
+        completed = subprocess.run(cmd, check=False)
+        if completed.returncode != 0:
+            raise DownloadError(
+                f"aria2c exited with code {completed.returncode}; "
+                "partial files can be resumed"
+            )
+
+        if not os.path.exists(target):
+            raise DownloadError("aria2c finished but the output file is missing")
+
+        size = os.path.getsize(target)
+        logging.debug("downloaded %s (%s bytes) with aria2c", target, size)
+        result = DownloadResult(path=target, size=size, elapsed=time.time() - started)
+        self.reporter.on_complete(result)
+        return result
+
+    def download(self, url: str, filename: Optional[str] = None) -> DownloadResult:
+        """Download ``url`` into :attr:`output_dir` and return the result."""
+        if self.aria2c:
+            return self._download_with_aria2c(url, filename)
+
+        url, info, direct_link, started = self._prepare(url)
         session = self._get_session(url)
 
         os.makedirs(self.output_dir, exist_ok=True)
