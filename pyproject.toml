@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "1fichier-dl-cli"
+version = "2.4.0"
+description = "Command line downloader for 1fichier share links"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { file = "LICENSE" }
+authors = [
+    { name = "Mathesu-veLi", email = "matheuslevit@gmail.com" },
+]
+keywords = ["1fichier", "download", "cli"]
+classifiers = [
+    "Environment :: Console",
+    "License :: OSI Approved :: GNU General Public License v2 (GPLv2)",
+    "Programming Language :: Python :: 3",
+    "Topic :: Internet :: File Transfer Protocol (FTP)",
+]
+dependencies = [
+    "requests>=2.31",
+    "requests[socks]>=2.31",
+    "lxml>=4.9",
+    "urllib3>=2.0",
+]
+
+[project.optional-dependencies]
+gui = [
+    "PyQt5",
+    "pyqtdarktheme",
+    "curl_cffi==0.5.7",
+    "beautifulsoup4",
+]
+dev = [
+    "pytest>=8",
+]
+
+[project.scripts]
+1fichier-dl = "core.cli.main:main"
+1fichier-dl-cli = "core.cli.main:main"
+
+[tool.setuptools.packages.find]
+include = ["core*"]
+
+[tool.setuptools.package-data]
+"core.gui" = ["res/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
