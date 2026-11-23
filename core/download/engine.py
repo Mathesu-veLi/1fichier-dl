@@ -1,0 +1,300 @@
+"""UI-agnostic download engine for 1fichier share links.
+
+The GUI code in :mod:`core.download.download` is tightly coupled to PyQt5.
+This module implements the same download flow without importing any GUI
+toolkit, so it can also run on headless machines (for example a CachyOS
+server or a terminal-only desktop).
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+import re
+import time
+from dataclasses import dataclass
+from typing import Optional
+from urllib.parse import unquote
+
+import lxml.html
+import requests
+
+USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/120.0.0.0 Safari/537.36"
+)
+
+CHUNK_SIZE = 64 * 1024
+DEFAULT_TIMEOUT = 30
+
+_DIRECT_LINK_RE = re.compile(
+    r'href=["\'](https://a-\d+\.1fichier\.com/[^"\']+)["\']', re.IGNORECASE
+)
+_SIZE_RE = re.compile(r"([\d.,]+)\s*(B|KB|MB|GB|TB)", re.IGNORECASE)
+_UNITS = {"B": 0, "KB": 1, "MB": 2, "GB": 3, "TB": 4}
+
+
+class DownloadError(RuntimeError):
+    """Base class for errors that can be shown directly to the user."""
+
+
+class PasswordRequired(DownloadError):
+    """The share link is protected by a password that was not supplied."""
+
+
+class IncorrectPassword(DownloadError):
+    """The supplied password was rejected by 1fichier."""
+
+
+class LinkUnavailable(DownloadError):
+    """The link is dead, malformed or does not point to a downloadable file."""
+
+
+@dataclass
+class FileInfo:
+    """Metadata shown by 1fichier before a download starts."""
+
+    name: Optional[str] = None
+    size: Optional[int] = None
+    size_text: str = "-"
+    private: bool = False
+
+
+@dataclass
+class DownloadResult:
+    """Outcome of a completed download."""
+
+    path: str
+    size: int
+    elapsed: float
+
+
+def normalize_link(link: str) -> str:
+    """Return a clean http(s) URL for a link copied from a browser."""
+    link = link.strip()
+    if not link:
+        raise LinkUnavailable("empty download link")
+    if not link.startswith(("http://", "https://")):
+        link = f"https://{link}"
+    return link
+
+
+def make_session(link: Optional[str] = None, timeout: int = DEFAULT_TIMEOUT) -> requests.Session:
+    """Create an HTTP session with the headers 1fichier expects."""
+    session = requests.Session()
+    session.headers.update(
+        {
+            "User-Agent": USER_AGENT,
+            "Accept": (
+                "text/html,application/xhtml+xml,application/xml;q=0.9,"
+                "image/avif,image/webp,*/*;q=0.8"
+            ),
+            "Accept-Language": "en-US,en;q=0.8",
+            "Connection": "keep-alive",
+        }
+    )
+    return session
+
+
+def parse_size(text: str) -> Optional[int]:
+    """Convert a 1fichier size string such as ``1.25 GB`` to bytes."""
+    match = _SIZE_RE.search(text or "")
+    if not match:
+        return None
+    value = float(match.group(1).replace(",", "."))
+    return int(value * (1024 ** _UNITS[match.group(2).upper()]))
+
+
+def _first_text(document: lxml.html.HtmlElement, xpaths: list[str]) -> Optional[str]:
+    for xpath in xpaths:
+        nodes = document.xpath(xpath)
+        for node in nodes:
+            text = node.text_content().strip()
+            if text:
+                return text
+    return None
+
+
+def _raise_for_error_page(text: str) -> None:
+    """Translate known 1fichier error pages into friendly exceptions."""
+    lowered = text.lower()
+    if "incorrect password" in lowered:
+        raise IncorrectPassword("1fichier rejected the password for this file")
+    if "must wait" in lowered or "please wait" in lowered:
+        raise DownloadError(
+            "1fichier is rate-limiting this connection; wait a while, "
+            "use another IP or pass --proxy"
+        )
+    if "file not found" in lowered or "file has been removed" in lowered:
+        raise LinkUnavailable("the file is no longer available on 1fichier")
+    if "welcome !" in lowered or "window.location.reload()" in lowered:
+        raise DownloadError(
+            "1fichier returned its landing page instead of the file page; "
+            "open the share link once in a browser and copy it again"
+        )
+
+
+def get_file_info(
+    url: str,
+    session: Optional[requests.Session] = None,
+    timeout: int = DEFAULT_TIMEOUT,
+) -> FileInfo:
+    """Fetch the file name and size shown on the 1fichier page."""
+    url = normalize_link(url)
+    session = session or make_session(url, timeout)
+
+    response = session.get(url, timeout=timeout)
+    if response.status_code == 404:
+        raise LinkUnavailable("the file is no longer available on 1fichier")
+
+    document = lxml.html.fromstring(response.content)
+    if document.xpath('//*[@id="pass"]'):
+        return FileInfo(private=True)
+
+    name = _first_text(
+        document,
+        [
+            '//span[@class="tier-name"]',
+            '//table[@class="premium"]//td[@class="normal"]//span[1]',
+        ],
+    )
+    size_text = _first_text(
+        document,
+        [
+            '//span[@class="tier-feat"]',
+            '//table[@class="premium"]//td[@class="normal"]//span[2]',
+        ],
+    )
+
+    if not name:
+        _raise_for_error_page(response.text)
+        raise LinkUnavailable("could not read file information from the 1fichier page")
+
+    return FileInfo(
+        name=name,
+        size=parse_size(size_text or ""),
+        size_text=(size_text or "-").strip(),
+    )
+
+
+def _filename_from_disposition(header: Optional[str]) -> Optional[str]:
+    """Extract a file name from a ``Content-Disposition`` header."""
+    if not header:
+        return None
+
+    extended = re.search(r"filename\*\s*=\s*UTF-8''([^;]+)", header, re.IGNORECASE)
+    if extended:
+        return unquote(extended.group(1).strip().strip('"'))
+
+    regular = re.search(r'filename\s*=\s*"?([^";]+)"?', header, re.IGNORECASE)
+    if regular:
+        return regular.group(1).strip()
+
+    return None
+
+
+def _extract_direct_link(document: lxml.html.HtmlElement, text: str) -> Optional[str]:
+    """Find the temporary direct download URL in a 1fichier response."""
+    nodes = document.xpath("/html/body/div[4]/div[2]/a/@href")
+    if nodes:
+        return nodes[0]
+
+    match = _DIRECT_LINK_RE.search(text)
+    return match.group(1) if match else None
+
+
+class Downloader:
+    """Download one or more files from 1fichier without any GUI toolkit."""
+
+    def __init__(
+        self,
+        output_dir: str = ".",
+        timeout: int = DEFAULT_TIMEOUT,
+        session: Optional[requests.Session] = None,
+    ) -> None:
+        self.output_dir = os.path.abspath(os.path.expanduser(output_dir))
+        self.timeout = timeout
+        self.session = session
+
+    def _get_session(self, url: str) -> requests.Session:
+        if self.session is None:
+            self.session = make_session(url, self.timeout)
+        return self.session
+
+    def _request_direct_link(self, url: str) -> str:
+        session = self._get_session(url)
+        payload = {"dl_no_ssl": "on", "dlinline": "on"}
+
+        response = session.post(url, data=payload, timeout=self.timeout)
+        document = lxml.html.fromstring(response.content)
+
+        if document.xpath('//*[@id="pass"]'):
+            _raise_for_error_page(response.text)
+            raise PasswordRequired(
+                "this file is password protected; supply the password with --password"
+            )
+
+        direct_link = _extract_direct_link(document, response.text)
+        if direct_link:
+            return direct_link
+
+        _raise_for_error_page(response.text)
+        raise DownloadError("1fichier did not return a direct download link")
+
+    def download(self, url: str, filename: Optional[str] = None) -> DownloadResult:
+        """Download ``url`` into :attr:`output_dir` and return the result."""
+        url = normalize_link(url)
+        started = time.time()
+
+        info = get_file_info(url, session=self._get_session(url), timeout=self.timeout)
+        if info.private:
+            raise PasswordRequired(
+                "this file is password protected; supply the password with --password"
+            )
+
+        direct_link = self._request_direct_link(url)
+        session = self._get_session(url)
+        response = session.get(
+            direct_link,
+            stream=True,
+            timeout=self.timeout,
+            headers={"Referer": url},
+        )
+        response.raise_for_status()
+
+        try:
+            name = (
+                filename
+                or _filename_from_disposition(response.headers.get("Content-Disposition"))
+                or info.name
+                or "download.bin"
+            )
+            name = os.path.basename(name)
+            if not name:
+                raise DownloadError("could not determine a file name for the download")
+
+            os.makedirs(self.output_dir, exist_ok=True)
+            target = os.path.join(self.output_dir, name)
+            part = f"{target}.unfinished"
+            total = int(response.headers.get("Content-Length") or 0)
+            downloaded = 0
+
+            with open(part, "wb") as handle:
+                for chunk in response.iter_content(CHUNK_SIZE):
+                    if not chunk:
+                        continue
+                    handle.write(chunk)
+                    downloaded += len(chunk)
+
+            if total and downloaded != total:
+                raise DownloadError(
+                    f"incomplete download: received {downloaded} of {total} bytes"
+                )
+
+            os.replace(part, target)
+        finally:
+            response.close()
+
+        logging.debug("downloaded %s (%s bytes)", target, downloaded)
+        return DownloadResult(path=target, size=downloaded, elapsed=time.time() - started)
