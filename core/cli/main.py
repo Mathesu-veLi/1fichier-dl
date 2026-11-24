@@ -6,6 +6,7 @@ import argparse
 import logging
 import os
 import sys
+import time
 from typing import Optional, Sequence
 
 from core import __version__
@@ -37,6 +38,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="save a single download under this name",
     )
     parser.add_argument(
+        "--info",
+        action="store_true",
+        help="only print file name and size, do not download",
+    )
+    parser.add_argument(
         "--timeout",
         type=int,
         default=engine.DEFAULT_TIMEOUT,
@@ -60,8 +66,64 @@ def _supported_link(link: str) -> bool:
     return is_valid_link(link) and "ouo." not in link.lower()
 
 
+class ConsoleReporter(engine.DownloadReporter):
+    """Print status lines and, on a terminal, a live progress bar."""
+
+    def __init__(self, stream=None) -> None:
+        self.stream = stream or sys.stderr
+        self.interactive = self.stream.isatty()
+        self._last_update = 0.0
+        self._line_active = False
+
+    def _finish_line(self) -> None:
+        if self._line_active:
+            self.stream.write("\n")
+            self.stream.flush()
+            self._line_active = False
+
+    def on_status(self, message: str) -> None:
+        self._finish_line()
+        print(message, file=self.stream)
+
+    def on_progress(self, downloaded: int, total: int, speed: float) -> None:
+        if not self.interactive:
+            return
+        now = time.monotonic()
+        if now - self._last_update < 0.2 and (not total or downloaded < total):
+            return
+        self._last_update = now
+        percentage = f"{100 * downloaded / total:5.1f}%" if total else "  ?  "
+        line = f"\r{percentage} {convert_size(downloaded)}"
+        if total:
+            line += f"/{convert_size(total)}"
+        line += f"  {convert_size(int(speed))}/s"
+        self.stream.write(line)
+        self.stream.flush()
+        self._line_active = True
+
+    def on_complete(self, result: engine.DownloadResult) -> None:
+        self._finish_line()
+
+
+def _print_info(link: str, timeout: int) -> bool:
+    try:
+        info = engine.get_file_info(link, timeout=timeout)
+    except engine.DownloadError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return False
+
+    print(link)
+    print(f"  name: {info.name or '(unknown)'}")
+    print(f"  size: {info.size_text}")
+    print(f"  password: {'yes' if info.private else 'no'}")
+    return True
+
+
 def _download_one(args: argparse.Namespace, link: str, name: Optional[str]) -> bool:
-    downloader = engine.Downloader(output_dir=args.output_dir, timeout=args.timeout)
+    reporter = ConsoleReporter()
+    downloader = engine.Downloader(
+        output_dir=args.output_dir, timeout=args.timeout, reporter=reporter
+    )
     try:
         result = downloader.download(link, filename=name)
     except engine.DownloadError as exc:
@@ -95,8 +157,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             print(f"error: unsupported or malformed link: {link}", file=sys.stderr)
             failures += 1
             continue
-        name = args.filename
-        if not _download_one(args, link, name):
+        if args.info:
+            if not _print_info(link, args.timeout):
+                failures += 1
+            continue
+        if not _download_one(args, link, args.filename):
             failures += 1
 
     return 1 if failures else 0

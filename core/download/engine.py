@@ -70,6 +70,19 @@ class DownloadResult:
     elapsed: float
 
 
+class DownloadReporter:
+    """Optional hooks used to show progress without depending on a UI."""
+
+    def on_status(self, message: str) -> None:
+        """Called when the downloader enters a new phase."""
+
+    def on_progress(self, downloaded: int, total: int, speed: float) -> None:
+        """Called after each chunk; ``speed`` is measured in bytes/second."""
+
+    def on_complete(self, result: DownloadResult) -> None:
+        """Called once the file has been moved to its final name."""
+
+
 def normalize_link(link: str) -> str:
     """Return a clean http(s) URL for a link copied from a browser."""
     link = link.strip()
@@ -212,10 +225,12 @@ class Downloader:
         output_dir: str = ".",
         timeout: int = DEFAULT_TIMEOUT,
         session: Optional[requests.Session] = None,
+        reporter: Optional[DownloadReporter] = None,
     ) -> None:
         self.output_dir = os.path.abspath(os.path.expanduser(output_dir))
         self.timeout = timeout
         self.session = session
+        self.reporter = reporter or DownloadReporter()
 
     def _get_session(self, url: str) -> requests.Session:
         if self.session is None:
@@ -247,12 +262,14 @@ class Downloader:
         url = normalize_link(url)
         started = time.time()
 
+        self.reporter.on_status("Fetching file information")
         info = get_file_info(url, session=self._get_session(url), timeout=self.timeout)
         if info.private:
             raise PasswordRequired(
                 "this file is password protected; supply the password with --password"
             )
 
+        self.reporter.on_status("Requesting a direct download link")
         direct_link = self._request_direct_link(url)
         session = self._get_session(url)
         response = session.get(
@@ -277,8 +294,9 @@ class Downloader:
             os.makedirs(self.output_dir, exist_ok=True)
             target = os.path.join(self.output_dir, name)
             part = f"{target}.unfinished"
-            total = int(response.headers.get("Content-Length") or 0)
+            total = int(response.headers.get("Content-Length") or 0) or (info.size or 0)
             downloaded = 0
+            self.reporter.on_status(f"Downloading {name}")
 
             with open(part, "wb") as handle:
                 for chunk in response.iter_content(CHUNK_SIZE):
@@ -286,6 +304,8 @@ class Downloader:
                         continue
                     handle.write(chunk)
                     downloaded += len(chunk)
+                    elapsed = max(time.time() - started, 1e-9)
+                    self.reporter.on_progress(downloaded, total, downloaded / elapsed)
 
             if total and downloaded != total:
                 raise DownloadError(
@@ -297,4 +317,6 @@ class Downloader:
             response.close()
 
         logging.debug("downloaded %s (%s bytes)", target, downloaded)
-        return DownloadResult(path=target, size=downloaded, elapsed=time.time() - started)
+        result = DownloadResult(path=target, size=downloaded, elapsed=time.time() - started)
+        self.reporter.on_complete(result)
+        return result
