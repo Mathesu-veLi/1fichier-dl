@@ -226,11 +226,13 @@ class Downloader:
         timeout: int = DEFAULT_TIMEOUT,
         session: Optional[requests.Session] = None,
         reporter: Optional[DownloadReporter] = None,
+        password: Optional[str] = None,
     ) -> None:
         self.output_dir = os.path.abspath(os.path.expanduser(output_dir))
         self.timeout = timeout
         self.session = session
         self.reporter = reporter or DownloadReporter()
+        self.password = password
 
     def _get_session(self, url: str) -> requests.Session:
         if self.session is None:
@@ -240,6 +242,8 @@ class Downloader:
     def _request_direct_link(self, url: str) -> str:
         session = self._get_session(url)
         payload = {"dl_no_ssl": "on", "dlinline": "on"}
+        if self.password:
+            payload["pass"] = self.password
 
         response = session.post(url, data=payload, timeout=self.timeout)
         document = lxml.html.fromstring(response.content)
@@ -264,7 +268,7 @@ class Downloader:
 
         self.reporter.on_status("Fetching file information")
         info = get_file_info(url, session=self._get_session(url), timeout=self.timeout)
-        if info.private:
+        if info.private and not self.password:
             raise PasswordRequired(
                 "this file is password protected; supply the password with --password"
             )

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import getpass
 import logging
 import os
 import sys
@@ -36,6 +37,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--filename",
         help="save a single download under this name",
+    )
+    parser.add_argument(
+        "-p",
+        "--password",
+        help="password for protected files (prompted if omitted)",
     )
     parser.add_argument(
         "--info",
@@ -121,21 +127,46 @@ def _print_info(link: str, timeout: int) -> bool:
 
 def _download_one(args: argparse.Namespace, link: str, name: Optional[str]) -> bool:
     reporter = ConsoleReporter()
-    downloader = engine.Downloader(
-        output_dir=args.output_dir, timeout=args.timeout, reporter=reporter
-    )
-    try:
-        result = downloader.download(link, filename=name)
-    except engine.DownloadError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return False
-    except Exception as exc:  # network errors and unexpected failures
-        print(f"error: could not download {link}: {exc}", file=sys.stderr)
-        logging.debug("download failed", exc_info=True)
-        return False
+    password = args.password
+    can_prompt = sys.stdin.isatty()
 
-    print(f"Saved {result.path} ({convert_size(result.size)}) in {result.elapsed:.1f}s")
-    return True
+    for attempt in range(3):
+        downloader = engine.Downloader(
+            output_dir=args.output_dir,
+            timeout=args.timeout,
+            reporter=reporter,
+            password=password,
+        )
+        try:
+            result = downloader.download(link, filename=name)
+        except engine.PasswordRequired as exc:
+            if password is not None or not can_prompt:
+                print(f"error: {exc}", file=sys.stderr)
+                return False
+            password = getpass.getpass("Password: ")
+            if not password:
+                print("error: a password is required for this file", file=sys.stderr)
+                return False
+            continue
+        except engine.IncorrectPassword as exc:
+            if args.password is not None or not can_prompt or attempt == 2:
+                print(f"error: {exc}", file=sys.stderr)
+                return False
+            print("Incorrect password, try again.", file=sys.stderr)
+            password = getpass.getpass("Password: ")
+            continue
+        except engine.DownloadError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return False
+        except Exception as exc:  # network errors and unexpected failures
+            print(f"error: could not download {link}: {exc}", file=sys.stderr)
+            logging.debug("download failed", exc_info=True)
+            return False
+
+        print(f"Saved {result.path} ({convert_size(result.size)}) in {result.elapsed:.1f}s")
+        return True
+
+    return False
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
