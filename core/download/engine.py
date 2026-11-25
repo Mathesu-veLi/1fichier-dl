@@ -152,12 +152,13 @@ def get_file_info(
     url: str,
     session: Optional[requests.Session] = None,
     timeout: int = DEFAULT_TIMEOUT,
+    proxies: Optional[dict[str, str]] = None,
 ) -> FileInfo:
     """Fetch the file name and size shown on the 1fichier page."""
     url = normalize_link(url)
     session = session or make_session(url, timeout)
 
-    response = session.get(url, timeout=timeout)
+    response = session.get(url, timeout=timeout, proxies=proxies)
     if response.status_code == 404:
         raise LinkUnavailable("the file is no longer available on 1fichier")
 
@@ -227,12 +228,21 @@ class Downloader:
         session: Optional[requests.Session] = None,
         reporter: Optional[DownloadReporter] = None,
         password: Optional[str] = None,
+        proxy: Optional[str] = None,
     ) -> None:
         self.output_dir = os.path.abspath(os.path.expanduser(output_dir))
         self.timeout = timeout
         self.session = session
         self.reporter = reporter or DownloadReporter()
         self.password = password
+        self.proxy = proxy
+
+    @property
+    def proxies(self) -> Optional[dict[str, str]]:
+        """Proxy mapping understood by requests, or ``None`` for a direct connection."""
+        if not self.proxy:
+            return None
+        return {"http": self.proxy, "https": self.proxy}
 
     def _get_session(self, url: str) -> requests.Session:
         if self.session is None:
@@ -245,7 +255,9 @@ class Downloader:
         if self.password:
             payload["pass"] = self.password
 
-        response = session.post(url, data=payload, timeout=self.timeout)
+        response = session.post(
+            url, data=payload, timeout=self.timeout, proxies=self.proxies
+        )
         document = lxml.html.fromstring(response.content)
 
         if document.xpath('//*[@id="pass"]'):
@@ -267,7 +279,12 @@ class Downloader:
         started = time.time()
 
         self.reporter.on_status("Fetching file information")
-        info = get_file_info(url, session=self._get_session(url), timeout=self.timeout)
+        info = get_file_info(
+            url,
+            session=self._get_session(url),
+            timeout=self.timeout,
+            proxies=self.proxies,
+        )
         if info.private and not self.password:
             raise PasswordRequired(
                 "this file is password protected; supply the password with --password"
@@ -281,6 +298,7 @@ class Downloader:
             stream=True,
             timeout=self.timeout,
             headers={"Referer": url},
+            proxies=self.proxies,
         )
         response.raise_for_status()
 

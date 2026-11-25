@@ -55,6 +55,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="HTTP timeout in seconds (default: %(default)s)",
     )
     parser.add_argument(
+        "--proxy",
+        help="HTTP/SOCKS proxy URL, e.g. socks5h://127.0.0.1:1080",
+    )
+    parser.add_argument(
         "-v",
         "--verbose",
         action="store_true",
@@ -111,9 +115,10 @@ class ConsoleReporter(engine.DownloadReporter):
         self._finish_line()
 
 
-def _print_info(link: str, timeout: int) -> bool:
+def _print_info(link: str, timeout: int, proxy: Optional[str] = None) -> bool:
+    proxies = {"http": proxy, "https": proxy} if proxy else None
     try:
-        info = engine.get_file_info(link, timeout=timeout)
+        info = engine.get_file_info(link, timeout=timeout, proxies=proxies)
     except engine.DownloadError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return False
@@ -136,6 +141,7 @@ def _download_one(args: argparse.Namespace, link: str, name: Optional[str]) -> b
             timeout=args.timeout,
             reporter=reporter,
             password=password,
+            proxy=args.proxy,
         )
         try:
             result = downloader.download(link, filename=name)
@@ -189,7 +195,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             failures += 1
             continue
         if args.info:
-            if not _print_info(link, args.timeout):
+            if not _print_info(link, args.timeout, args.proxy):
                 failures += 1
             continue
         if not _download_one(args, link, args.filename):
