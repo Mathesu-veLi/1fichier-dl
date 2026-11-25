@@ -33,6 +33,7 @@ _DIRECT_LINK_RE = re.compile(
 )
 _SIZE_RE = re.compile(r"([\d.,]+)\s*(B|KB|MB|GB|TB)", re.IGNORECASE)
 _UNITS = {"B": 0, "KB": 1, "MB": 2, "GB": 3, "TB": 4}
+_AFFILIATE_RE = re.compile(r"[?&]af=(\d+)", re.IGNORECASE)
 
 
 class DownloadError(RuntimeError):
@@ -93,8 +94,19 @@ def normalize_link(link: str) -> str:
     return link
 
 
+def affiliate_code(link: str) -> Optional[str]:
+    """Return the ``af`` affiliate id embedded in a share link, if any."""
+    match = _AFFILIATE_RE.search(link or "")
+    return match.group(1) if match else None
+
+
 def make_session(link: Optional[str] = None, timeout: int = DEFAULT_TIMEOUT) -> requests.Session:
-    """Create an HTTP session with the headers 1fichier expects."""
+    """Create an HTTP session with the headers 1fichier expects.
+
+    1fichier uses the ``AF`` cookie to remember the affiliate id from links
+    such as ``https://1fichier.com/?FILE_ID&af=123``. Without that cookie the
+    server answers with its landing page instead of the file page.
+    """
     session = requests.Session()
     session.headers.update(
         {
@@ -107,6 +119,11 @@ def make_session(link: Optional[str] = None, timeout: int = DEFAULT_TIMEOUT) -> 
             "Connection": "keep-alive",
         }
     )
+
+    code = affiliate_code(link or "")
+    if code:
+        session.cookies.set("AF", code, domain="1fichier.com", path="/")
+
     return session
 
 
