@@ -10,6 +10,8 @@ import sys
 import time
 from typing import Optional, Sequence
 
+import requests
+
 from core import __version__
 from core.download import engine
 from core.download.helpers import convert_size, is_valid_link
@@ -170,7 +172,11 @@ def _download_one(args: argparse.Namespace, link: str, name: Optional[str]) -> b
         except engine.DownloadError as exc:
             print(f"error: {exc}", file=sys.stderr)
             return False
-        except Exception as exc:  # network errors and unexpected failures
+        except requests.RequestException as exc:
+            print(f"error: network failure while downloading {link}: {exc}", file=sys.stderr)
+            logging.debug("network failure", exc_info=True)
+            return False
+        except Exception as exc:  # unexpected failures
             print(f"error: could not download {link}: {exc}", file=sys.stderr)
             logging.debug("download failed", exc_info=True)
             return False
@@ -203,11 +209,18 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             print(f"error: unsupported or malformed link: {link}", file=sys.stderr)
             failures += 1
             continue
-        if args.info:
-            if not _print_info(link, args.timeout, args.proxy):
+        try:
+            if args.info:
+                if not _print_info(link, args.timeout, args.proxy):
+                    failures += 1
+                continue
+            if not _download_one(args, link, args.filename):
                 failures += 1
-            continue
-        if not _download_one(args, link, args.filename):
-            failures += 1
+        except KeyboardInterrupt:
+            print(
+                "\ninterrupted; partial files are kept for a later resume",
+                file=sys.stderr,
+            )
+            return 130
 
     return 1 if failures else 0
