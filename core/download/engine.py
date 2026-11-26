@@ -52,6 +52,10 @@ class LinkUnavailable(DownloadError):
     """The link is dead, malformed or does not point to a downloadable file."""
 
 
+class DestinationExists(DownloadError):
+    """A complete file with the target name already exists."""
+
+
 @dataclass
 class FileInfo:
     """Metadata shown by 1fichier before a download starts."""
@@ -69,6 +73,7 @@ class DownloadResult:
     path: str
     size: int
     elapsed: float
+    skipped: bool = False
 
 
 class DownloadReporter:
@@ -246,6 +251,7 @@ class Downloader:
         reporter: Optional[DownloadReporter] = None,
         password: Optional[str] = None,
         proxy: Optional[str] = None,
+        overwrite: bool = False,
     ) -> None:
         self.output_dir = os.path.abspath(os.path.expanduser(output_dir))
         self.timeout = timeout
@@ -253,6 +259,7 @@ class Downloader:
         self.reporter = reporter or DownloadReporter()
         self.password = password
         self.proxy = proxy
+        self.overwrite = overwrite
 
     @property
     def proxies(self) -> Optional[dict[str, str]]:
@@ -310,34 +317,67 @@ class Downloader:
         self.reporter.on_status("Requesting a direct download link")
         direct_link = self._request_direct_link(url)
         session = self._get_session(url)
+
+        os.makedirs(self.output_dir, exist_ok=True)
+        name = os.path.basename(
+            filename
+            or info.name
+            or "download.bin"
+        ) or "download.bin"
+        target = os.path.join(self.output_dir, name)
+        part = f"{target}.unfinished"
+
+        if os.path.exists(target) and not self.overwrite:
+            if info.size and os.path.getsize(target) == info.size:
+                self.reporter.on_status(f"Already downloaded: {name}")
+                result = DownloadResult(
+                    path=target,
+                    size=os.path.getsize(target),
+                    elapsed=time.time() - started,
+                    skipped=True,
+                )
+                self.reporter.on_complete(result)
+                return result
+            raise DestinationExists(
+                f"{target} already exists; pass --overwrite to replace it"
+            )
+
+        offset = os.path.getsize(part) if os.path.exists(part) else 0
+        headers = {"Referer": url}
+        if offset:
+            headers["Range"] = f"bytes={offset}-"
+            self.reporter.on_status(f"Resuming {name} at {offset} bytes")
+
         response = session.get(
             direct_link,
             stream=True,
             timeout=self.timeout,
-            headers={"Referer": url},
+            headers=headers,
             proxies=self.proxies,
         )
         response.raise_for_status()
 
         try:
-            name = (
-                filename
-                or _filename_from_disposition(response.headers.get("Content-Disposition"))
-                or info.name
-                or "download.bin"
+            remote_name = _filename_from_disposition(
+                response.headers.get("Content-Disposition")
             )
-            name = os.path.basename(name)
-            if not name:
-                raise DownloadError("could not determine a file name for the download")
+            if filename is None and remote_name and not info.name:
+                name = os.path.basename(remote_name) or name
+                target = os.path.join(self.output_dir, name)
+                part = f"{target}.unfinished"
 
-            os.makedirs(self.output_dir, exist_ok=True)
-            target = os.path.join(self.output_dir, name)
-            part = f"{target}.unfinished"
-            total = int(response.headers.get("Content-Length") or 0) or (info.size or 0)
-            downloaded = 0
+            if offset and response.status_code != 206:
+                logging.debug("server ignored the Range request; restarting from zero")
+                offset = 0
+
+            total = offset + int(response.headers.get("Content-Length") or 0)
+            if not total:
+                total = info.size or 0
+            downloaded = offset
+            mode = "ab" if offset else "wb"
             self.reporter.on_status(f"Downloading {name}")
 
-            with open(part, "wb") as handle:
+            with open(part, mode) as handle:
                 for chunk in response.iter_content(CHUNK_SIZE):
                     if not chunk:
                         continue

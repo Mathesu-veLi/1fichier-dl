@@ -59,6 +59,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="HTTP/SOCKS proxy URL, e.g. socks5h://127.0.0.1:1080",
     )
     parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="replace a file that already exists",
+    )
+    parser.add_argument(
         "-v",
         "--verbose",
         action="store_true",
@@ -142,6 +147,7 @@ def _download_one(args: argparse.Namespace, link: str, name: Optional[str]) -> b
             reporter=reporter,
             password=password,
             proxy=args.proxy,
+            overwrite=args.overwrite,
         )
         try:
             result = downloader.download(link, filename=name)
@@ -169,7 +175,10 @@ def _download_one(args: argparse.Namespace, link: str, name: Optional[str]) -> b
             logging.debug("download failed", exc_info=True)
             return False
 
-        print(f"Saved {result.path} ({convert_size(result.size)}) in {result.elapsed:.1f}s")
+        if result.skipped:
+            print(f"Already downloaded {result.path} ({convert_size(result.size)})")
+        else:
+            print(f"Saved {result.path} ({convert_size(result.size)}) in {result.elapsed:.1f}s")
         return True
 
     return False
