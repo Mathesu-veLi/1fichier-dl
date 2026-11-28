@@ -139,3 +139,6 @@ they do not need network access or an account.
 ## License
 
 GNU General Public License v2. See [LICENSE](LICENSE).
+
+For a plain virtual environment, the CLI runtime dependencies are also listed in
+`requirements-cli.txt`; `requirements-dev.txt` adds the test runner.

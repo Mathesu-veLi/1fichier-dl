@@ -1,0 +1,5 @@
+# Runtime dependencies for the command line interface only.
+requests>=2.31
+requests[socks]>=2.31
+lxml>=4.9
+urllib3>=2.0
