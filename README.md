@@ -1,151 +1,141 @@
-**🧙‍♂️ 1Fichier-dl Project**
+# 1Fichier-dl CLI
 
-(This is a fork version of the 1Fichier-dl project, which is no longer being maintained.)
+A command line version of [1Fichier-dl](https://github.com/Leinad4Mind/1fichier-dl)
+for downloading files from 1fichier share links on Linux. It was prepared for
+[CachyOS](https://cachyos.org/) (Arch-based), but works on any distribution with
+Python 3.9 or newer.
 
-<p align="left">
-  <img src="https://github.com/leinad4mind/1fichier-dl/blob/main/screenshots/ico.png?raw=true"></img>
-</p>
+This is a fork of the original GUI project. The PyQt5 interface is still in the
+repository, but the default workflow is now terminal-first and does not require
+Qt to be installed.
 
-# 😺 1Fichier Downloader
+## Features
 
-This is the `1Fichier Download Manager` program that can be simply run as an `exe` file without installation on Windows.
-We help you download at the fastest possible speed without having to wait for each download.
+- Download one or more 1fichier links from the terminal.
+- Show file name, size and password protection with `--info`.
+- Prompt for passwords of protected files (or accept `--password`).
+- Resume interrupted downloads from `.unfinished` files.
+- Skip files that are already complete and protect existing files by default.
+- Optional HTTP/SOCKS proxy for connections that are rate-limited by 1fichier.
+- Preserve the `af` affiliate cookie embedded in share links.
+- Friendly exit codes for scripts: `0` success, `1` failure, `130` interrupt.
 
-<p align="center">
-  <img src="https://raw.githubusercontent.com/leinad4mind/1fichier-dl/main/screenshots/preview-1fichier-site.png"></img>
-</p>
-<p align="center">
-  <b>You can copy and enter the 1fichier.com download link (URL) in your browser.</b>
-</p>
-<br/>
-<br/>
-<p align="center">
-  <img src="https://raw.githubusercontent.com/leinad4mind/1fichier-dl/main/screenshots/preview-ouo-shortlink.png"></img>
-</p>
-<p align="center">
-  <b>If you directly copy and enter the ouo.io shortened link (URL) in the browser, reCAPTCHA is automatically bypassed</b>
-</p>
-<br/>
-<br/>
-<p align="center">
-  <img src="https://raw.githubusercontent.com/leinad4mind/1fichier-dl/main/screenshots/preview0.png"></img>
-</p>
+## Install on CachyOS
 
-<p align="center">
-  <b>Simple operation by entering the 1fichier link address in the 1fichier downloader program.</b>
-</p>
-<br/>
-<br/>
+CachyOS follows Arch Linux packaging rules and marks the system Python as
+externally managed (PEP 668). Use `pipx` or a virtual environment instead of
+`sudo pip install`.
 
-<p align="center">
-  <img src="https://raw.githubusercontent.com/leinad4mind/1fichier-dl/main/screenshots/preview_settings0.png"></img>
-</p>
+### With pipx (recommended)
 
-<p align="center">
-  <b>Copy from clipboard or automatically download to bypass latency through multiple proxy servers.</b>
-</p>
-<br/>
-<br/>
-
-## 😼 Introduction to key features
-
-⭐ You can manage your download list just by entering the download ‘link’ address, so you can hang it up and sleep to your heart’s content.
-
-⭐ ‘Bypass’ the inconvenience of waiting time during continuous downloads for free users.
-
-⭐ Users can directly enter the proxy list via URL in the Settings > Connections menu. (replaces default proxy)
-
-⭐ In addition to the `1ficher` link, when you directly enter a shortened `URL` such as `ouo.io`, an automatic link that bypasses `reCAPTCHA` is added.
-
-⭐ The default download folder path is the Windows ‘Download’ folder.
-
-_Your life is short. Don't wait any longer._
-
-<br/>
-<br/>
-<p align="center">
-  <img src="https://raw.githubusercontent.com/leinad4mind/1fichier-dl/main/screenshots/Screenshot_Light.png"></img>
-</p>
-
-<p align="center">
-  <b>Light Theme</b>
-</p>
-<br/>
-<br/>
-
-<p align="center">
-  <img src="https://raw.githubusercontent.com/leinad4mind/1fichier-dl/main/screenshots/Screenshot_Dark.png"></img>
-</p>
-
-<p align="center">
-  <b>Dark Theme</b>
-</p>
-<br/>
-<br/>
-
-## 😻 Improvements
-
-- Readability of ‘GUI’ icon colors improved
-- Change in the ‘default proxy list’ provided by default in the program.
-- Easier build with `exe` for Windows using `PyInstaller` (`onefile` build applied)
-- In case of proxy bypass, the proxy server currently being attempted is indicated as `Protocol://IP:PORT` in the `Status` item.
-- Added `Progress %` decimal notation so that users can easily see the current progress.
-- Applying `reCAPTCHA` bypass to the cumbersome `ouo.io` shortened `URL` when copying the link.
-- Improvement of `UX` that worked awkwardly when adding a download link (prevention of loading screen and duplicate input)
-- Added ‘Add from Clipboard’ function to allow immediate download of ‘URL’ copied to ‘Clipboard’
-- Supports simultaneous proxy bypass downloads using `multi-thread` (default `3`, can be changed in settings, experimental)
-  <br/>
-  <br/>
-
-## 😹 Things to improve in the future
-
-- Improved speed slowdown due to repeated `requests` using `https` proxy (applied and testing `sock5` proxy)
-- If you are connected to a proxy server with a slow download speed such as `100kb`, you need to automatically change to another proxy.
-- Added exception handling when adding duplicate downloads with the same file name (processing required after actual 1fichier URL parsing)
-- Supports asynchronous download using `Asyncio` instead of `Threading`, which is slow when downloading simultaneously (increases speed)
-- In addition to the basic specification ‘1ficher’, it is necessary to check whether programs from other similar download sites are supported.
-- Supports simultaneous proxy downloads using `Threading`
-  <br/>
-  <br/>
-
-## 🙀 Run in a non-Windows environment
-
-For development purposes, or when running the GUI directly through Python on Linux or Mac, you can run it from the project folder as follows.
-There are currently only a few dependencies, but there will be no problem if you proceed based on Python 3.11 version.
-
-```
-pip install -r requirements.txt
-python 1fichier-dl.py
+```bash
+sudo pacman -S --needed python python-pipx
+git clone https://github.com/Mathesu-veLi/1fichier-dl.git
+cd 1fichier-dl
+pipx install .
 ```
 
-<br/>
-<br/>
+To install straight from GitHub:
 
-## 😾 Building Windows exe using PyInstaller
-
-We used `Python v3.11` version to build the `Legacy` project as a Windows program.
-You can also install `requirements.txt` from the project folder and build it directly. (`pip install -r requirements.txt`)
-
-```
-pyinstaller --windowed --noconsole --onefile --noconfirm --clean --hiddenimport=_cffi_backend --additional-hooks-dir=. --icon=core/gui/res/ico.ico --paths "[Python_Lib_Path]" --add-data "core/gui/res/*.*;res/" ./1fichier-dl.py
+```bash
+pipx install git+https://github.com/Mathesu-veLi/1fichier-dl.git
 ```
 
-Modified to `onefile` build for cleaner folder structure.
-Since it is Windows-based, if there is a problem with the default file storage path, you must `build` in the folder structure rather than `onefile`.
+Both `1fichier-dl` and `1fichier-dl-cli` are available after installation.
 
-When building a Windows program in `exe` format using `PyInstaller`, refer to the example of the command above.
-The Python `Lib` path in the `paths` item will be a child of the `env` path when using conada.
+### Development virtual environment
 
-Strangely, due to the chronic virus misdiagnosis problem of `PyInstaller`, I downloaded the `PyInstaller` source directly, initialized the existing build environment with `python ./waf distclean all`, and then installed `setup.py` in the folder with `pip install .`. You must install it yourself.
+```bash
+git clone https://github.com/Mathesu-veLi/1fichier-dl.git
+cd 1fichier-dl
+python -m venv .venv
+source .venv/bin/activate
+pip install -e .
+1fichier-dl --help
+```
 
-<br/>
-<br/>
+`python 1fichier-dl.py` also works from a checkout and uses the same CLI.
 
-## 😽 Thank you so much.
+## Usage
 
-- The button icons in the program use [Feather](https://feathericons.com/), which provides great free icons.
-- The icon for the Windows program is a free icon from [svgrepo](https://www.svgrepo.com/).
-- The program's loading overlay icon uses the free `svg` icon from [loading.io](https://loading.io).
-- The free `https` proxy server list is provided by [FREE_PROXIES_LIST](https: //github.com/Zaeem20/FREE_PROXIES_LIST) project and many other uses
-- The creator of the 1Fichier-dl project is `manuGMG`, branching from the version project of [jshsakura](https://github.com/jshsakura/1fichier-dl), which created an improved version from mine and I am forking to mine again.
-- To reduce inconvenience when copying a link, use [xcscxr](https://github.com/xcscxr) to bypass `reCAPTCHA` for `ouo.io` shortened `URL`.
+```bash
+# Download to ~/Downloads
+1fichier-dl 'https://1fichier.com/?sxosmk9m8rxcll2l08mx&af=4186346'
+
+# Choose the output directory and file name
+1fichier-dl -o ~/Videos --filename episode.mkv 'https://1fichier.com/?FILE_ID'
+
+# Inspect a link without downloading it
+1fichier-dl --info 'https://1fichier.com/?sxosmk9m8rxcll2l08mx&af=4186346'
+
+# Protected file: pass the password or let the CLI prompt for it
+1fichier-dl -p 'the-password' 'https://1fichier.com/?FILE_ID'
+
+# Route requests through a proxy
+1fichier-dl --proxy socks5h://127.0.0.1:1080 'https://1fichier.com/?FILE_ID'
+
+# Replace a file that already exists
+1fichier-dl --overwrite 'https://1fichier.com/?FILE_ID'
+```
+
+### Options
+
+| Option | Description |
+| --- | --- |
+| `-o, --output-dir DIR` | Directory for downloaded files (default: `~/Downloads`). |
+| `--filename NAME` | Save a single link under this name. |
+| `-p, --password PASS` | Password for protected files. |
+| `--info` | Print name, size and password status only. |
+| `--timeout SECONDS` | HTTP timeout (default: `30`). |
+| `--proxy URL` | HTTP or SOCKS proxy, for example `socks5h://127.0.0.1:1080`. |
+| `--overwrite` | Replace an existing complete file. |
+| `-v, --verbose` | Show debug logging. |
+| `--version` | Print the installed version. |
+
+### Resuming and partial files
+
+Downloads are written to `<name>.unfinished` and renamed only after the transfer
+finishes. Run the same command again to resume from the current offset (the
+server must support HTTP range requests). If a complete file with the same name
+exists and its size matches the server, the download is skipped; otherwise the
+CLI refuses to replace it unless `--overwrite` is passed.
+
+### 1fichier rate limits
+
+1fichier throttles free downloads per IP address and may ask you to wait before
+the next download. The CLI reports this case instead of silently retrying. Use
+`--proxy` with a working proxy (or wait) when that happens. Proxies are not used
+by default, unlike the old GUI behavior.
+
+## GUI (legacy)
+
+The original PyQt5 interface is still available from a checkout:
+
+```bash
+pip install -e '.[gui]'
+python 1fichier-dl-gui.py
+```
+
+Qt dependencies are optional and are not installed by the plain CLI package.
+
+## Development
+
+```bash
+pip install -e '.[dev]'
+pytest
+```
+
+The tests start a small local HTTP server that mimics the 1fichier file page, so
+they do not need network access or an account.
+
+## Credits
+
+- Original project by [manuGMG](https://github.com/manuGMG), later maintained by
+  [Leinad4Mind](https://github.com/Leinad4Mind/1fichier-dl).
+- GUI icon and screenshot assets come from the upstream project.
+- Free proxy lists, when enabled by the GUI, come from the upstream project's
+  sources.
+
+## License
+
+GNU General Public License v2. See [LICENSE](LICENSE).
