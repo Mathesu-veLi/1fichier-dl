@@ -9,6 +9,7 @@ import os
 import sys
 import time
 from typing import Optional, Sequence
+from urllib.parse import urlparse
 
 import requests
 
@@ -17,6 +18,20 @@ from core.download import engine
 from core.download.helpers import convert_size, is_valid_link
 
 DEFAULT_OUTPUT_DIR = os.path.join(os.path.expanduser("~"), "Downloads")
+
+# Domains that expose the same file page and can be handled by the engine.
+SUPPORTED_HOSTS = (
+    "1fichier.com",
+    "afterupload.com",
+    "cjoint.net",
+    "desfichiers.com",
+    "megadl.fr",
+    "mesfichiers.org",
+    "piecejointe.net",
+    "pjointe.com",
+    "tenvoi.com",
+    "dl4free.com",
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -80,7 +95,13 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _supported_link(link: str) -> bool:
-    return is_valid_link(link) and "ouo." not in link.lower()
+    if not is_valid_link(link) or "ouo." in link.lower():
+        return False
+    try:
+        host = (urlparse(engine.normalize_link(link)).hostname or "").lower()
+    except engine.DownloadError:
+        return False
+    return any(host == domain or host.endswith(f".{domain}") for domain in SUPPORTED_HOSTS)
 
 
 class ConsoleReporter(engine.DownloadReporter):
@@ -128,6 +149,10 @@ def _print_info(link: str, timeout: int, proxy: Optional[str] = None) -> bool:
         info = engine.get_file_info(link, timeout=timeout, proxies=proxies)
     except engine.DownloadError as exc:
         print(f"error: {exc}", file=sys.stderr)
+        return False
+    except requests.RequestException as exc:
+        print(f"error: network failure while reading {link}: {exc}", file=sys.stderr)
+        logging.debug("network failure", exc_info=True)
         return False
 
     print(link)

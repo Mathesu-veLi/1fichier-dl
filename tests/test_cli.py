@@ -10,6 +10,7 @@ from core.cli import main as cli_main
 @pytest.fixture
 def local_link(monkeypatch):
     monkeypatch.setattr(cli_main, "is_valid_link", lambda link: True)
+    monkeypatch.setattr(cli_main, "_supported_link", lambda link: True)
 
 
 def test_info_prints_metadata(fichier_server, local_link, capsys):
@@ -51,6 +52,15 @@ def test_cli_rejects_unknown_links(capsys):
 
     assert exit_code == 1
     assert "unsupported or malformed link" in captured.err
+
+
+def test_cli_rejects_lookalike_hosts():
+    assert cli_main._supported_link("https://example.com/1fichier.com/?abc") is False
+
+
+def test_cli_accepts_real_hosts():
+    assert cli_main._supported_link("https://1fichier.com/?abc") is True
+    assert cli_main._supported_link("1fichier.com/?abc&af=4186346") is True
 
 
 def test_cli_version(capsys):
