@@ -110,6 +110,16 @@ def test_private_file_downloads_with_password(fichier_server, tmp_path):
     assert open(result.path, "rb").read() == fichier_server.state.payload
 
 
+def test_rate_limit_reports_wait_time(fichier_server, tmp_path):
+    fichier_server.state.wait_minutes = 92
+
+    with pytest.raises(engine.RateLimited) as excinfo:
+        engine.Downloader(output_dir=str(tmp_path)).download(fichier_server.url)
+
+    assert "92 minutes" in str(excinfo.value)
+    assert isinstance(excinfo.value, engine.DownloadError)
+
+
 def test_resume_partial_download(fichier_server, tmp_path):
     payload = fichier_server.state.payload
     part = tmp_path / "test.bin.unfinished"

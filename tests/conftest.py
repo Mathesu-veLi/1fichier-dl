@@ -16,6 +16,7 @@ class MockState:
     payload: bytes = b"mock 1fichier payload\n" * 100
     filename: str = "test.bin"
     password: Optional[str] = None
+    wait_minutes: int = 0
     range_requests: list[str] = field(default_factory=list)
     cookie_headers: list[str] = field(default_factory=list)
 
@@ -109,6 +110,19 @@ class MockFichierHandler(http.server.BaseHTTPRequestHandler):
         if state.password and supplied != state.password:
             error = "Incorrect password." if supplied else ""
             self._send(self._password_page(error))
+            return
+
+        if state.wait_minutes:
+            body = (
+                "<html><body>"
+                "<div class='notice notice-alert'>"
+                "Without subscription, you must wait between downloads. "
+                f"You must wait {state.wait_minutes} minutes or subscribe."
+                "</div>"
+                f"<script>var ct = {state.wait_minutes}*60;</script>"
+                "</body></html>"
+            ).encode()
+            self._send(body)
             return
 
         self._send(self._direct_page())

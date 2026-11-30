@@ -34,6 +34,7 @@ _DIRECT_LINK_RE = re.compile(
 _SIZE_RE = re.compile(r"([\d.,]+)\s*(B|KB|MB|GB|TB)", re.IGNORECASE)
 _UNITS = {"B": 0, "KB": 1, "MB": 2, "GB": 3, "TB": 4}
 _AFFILIATE_RE = re.compile(r"[?&]af=(\d+)", re.IGNORECASE)
+_WAIT_RE = re.compile(r"var\s+ct\s*=\s*(\d+)\s*\*\s*60", re.IGNORECASE)
 
 
 class DownloadError(RuntimeError):
@@ -54,6 +55,10 @@ class LinkUnavailable(DownloadError):
 
 class DestinationExists(DownloadError):
     """A complete file with the target name already exists."""
+
+
+class RateLimited(DownloadError):
+    """1fichier asked this IP to wait before the next download."""
 
 
 @dataclass
@@ -157,8 +162,10 @@ def _raise_for_error_page(text: str) -> None:
     if "incorrect password" in lowered:
         raise IncorrectPassword("1fichier rejected the password for this file")
     if "must wait" in lowered or "please wait" in lowered:
-        raise DownloadError(
-            "1fichier is rate-limiting this connection; wait a while, "
+        match = _WAIT_RE.search(text)
+        wait = f"about {int(match.group(1))} minutes" if match else "a while"
+        raise RateLimited(
+            f"1fichier is rate-limiting this connection; wait {wait}, "
             "use another IP or pass --proxy"
         )
     if "file not found" in lowered or "file has been removed" in lowered:
