@@ -88,6 +88,7 @@ pip install -e .
 | `--info` | Print name, size and password status only. |
 | `--timeout SECONDS` | HTTP timeout (default: `30`). |
 | `--proxy URL` | HTTP or SOCKS proxy, for example `socks5h://127.0.0.1:1080`. |
+| `--proxy-file FILE` | Proxies to try in order, one per line. |
 | `--overwrite` | Replace an existing complete file. |
 | `-v, --verbose` | Show debug logging. |
 | `--version` | Print the installed version. |
@@ -103,9 +104,35 @@ CLI refuses to replace it unless `--overwrite` is passed.
 ### 1fichier rate limits
 
 1fichier throttles free downloads per IP address and may ask you to wait before
-the next download. The CLI reports this case instead of silently retrying. Use
-`--proxy` with a working proxy (or wait) when that happens. Proxies are not used
-by default, unlike the old GUI behavior.
+the next download. The CLI reports the advertised wait time instead of silently
+retrying. Use `--proxy`, `--proxy-file` or wait when that happens. Proxies are
+not used by default, unlike the old GUI behavior.
+
+### Proxy rotation
+
+Create a text file with one proxy per line. Blank lines and lines starting with
+`#` are ignored, duplicates are removed, and entries without a scheme are
+treated as HTTP proxies:
+
+```text
+# proxies.txt
+socks5h://127.0.0.1:1080
+http://user:password@10.0.0.5:8080
+203.0.113.10:3128
+```
+
+Then pass the file to the CLI:
+
+```bash
+1fichier-dl --proxy-file proxies.txt -o ~/Downloads 'https://1fichier.com/?FILE_ID'
+```
+
+For each link the CLI tries the proxies in order and moves to the next one when
+a proxy fails to connect or when 1fichier replies with its rate-limit page.
+Passwords, dead links and existing destination files stop the attempt instead
+of burning through the list. `--proxy` and `--proxy-file` are mutually
+exclusive. Keep proxy files containing credentials readable only by you
+(`chmod 600 proxies.txt`).
 
 ## GUI (legacy)
 
