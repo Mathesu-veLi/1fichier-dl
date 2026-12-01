@@ -71,9 +71,15 @@ def build_parser() -> argparse.ArgumentParser:
         default=engine.DEFAULT_TIMEOUT,
         help="HTTP timeout in seconds (default: %(default)s)",
     )
-    parser.add_argument(
+    proxy_group = parser.add_mutually_exclusive_group()
+    proxy_group.add_argument(
         "--proxy",
         help="HTTP/SOCKS proxy URL, e.g. socks5h://127.0.0.1:1080",
+    )
+    proxy_group.add_argument(
+        "--proxy-file",
+        metavar="FILE",
+        help="file with one proxy per line; rotate when a proxy fails or is rate-limited",
     )
     parser.add_argument(
         "--overwrite",
@@ -102,6 +108,34 @@ def _supported_link(link: str) -> bool:
     except engine.DownloadError:
         return False
     return any(host == domain or host.endswith(f".{domain}") for domain in SUPPORTED_HOSTS)
+
+
+def _load_proxies(path: str) -> list[str]:
+    """Read proxies from ``path``, ignoring blank lines and ``#`` comments.
+
+    Entries without a scheme are treated as HTTP proxies. Duplicates are
+    removed while preserving the order in the file.
+    """
+    expanded = os.path.expanduser(path)
+    try:
+        with open(expanded, encoding="utf-8") as handle:
+            lines = handle.readlines()
+    except OSError as exc:
+        raise ValueError(f"cannot read proxy file {path}: {exc}") from exc
+
+    proxies: list[str] = []
+    for raw_line in lines:
+        proxy = raw_line.strip()
+        if not proxy or proxy.startswith("#"):
+            continue
+        if "://" not in proxy:
+            proxy = f"http://{proxy}"
+        if proxy not in proxies:
+            proxies.append(proxy)
+
+    if not proxies:
+        raise ValueError(f"proxy file {path} does not contain any proxies")
+    return proxies
 
 
 class ConsoleReporter(engine.DownloadReporter):
@@ -143,75 +177,112 @@ class ConsoleReporter(engine.DownloadReporter):
         self._finish_line()
 
 
-def _print_info(link: str, timeout: int, proxy: Optional[str] = None) -> bool:
-    proxies = {"http": proxy, "https": proxy} if proxy else None
-    try:
-        info = engine.get_file_info(link, timeout=timeout, proxies=proxies)
-    except engine.DownloadError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return False
-    except requests.RequestException as exc:
-        print(f"error: network failure while reading {link}: {exc}", file=sys.stderr)
-        logging.debug("network failure", exc_info=True)
-        return False
+def _print_info(
+    link: str,
+    timeout: int,
+    proxies: Optional[Sequence[str]] = None,
+) -> bool:
+    last_error = "could not read file information"
+    for proxy in proxies or [None]:
+        mapping = {"http": proxy, "https": proxy} if proxy else None
+        try:
+            info = engine.get_file_info(link, timeout=timeout, proxies=mapping)
+        except engine.DownloadError as exc:
+            last_error = str(exc)
+            continue
+        except requests.RequestException as exc:
+            last_error = f"network failure while reading {link}: {exc}"
+            logging.debug("proxy failed while reading file info", exc_info=True)
+            continue
 
-    print(link)
-    print(f"  name: {info.name or '(unknown)'}")
-    print(f"  size: {info.size_text}")
-    print(f"  password: {'yes' if info.private else 'no'}")
-    return True
+        print(link)
+        print(f"  name: {info.name or '(unknown)'}")
+        print(f"  size: {info.size_text}")
+        print(f"  password: {'yes' if info.private else 'no'}")
+        return True
+
+    print(f"error: {last_error}", file=sys.stderr)
+    return False
 
 
-def _download_one(args: argparse.Namespace, link: str, name: Optional[str]) -> bool:
+def _download_one(
+    args: argparse.Namespace,
+    link: str,
+    name: Optional[str],
+    proxies: Optional[Sequence[str]] = None,
+) -> bool:
     reporter = ConsoleReporter()
     password = args.password
     can_prompt = sys.stdin.isatty()
+    proxy_list = list(proxies) if proxies else [None]
+    last_error: Optional[str] = None
+    password_attempts = 0
 
-    for attempt in range(3):
-        downloader = engine.Downloader(
-            output_dir=args.output_dir,
-            timeout=args.timeout,
-            reporter=reporter,
-            password=password,
-            proxy=args.proxy,
-            overwrite=args.overwrite,
-        )
-        try:
-            result = downloader.download(link, filename=name)
-        except engine.PasswordRequired as exc:
-            if password is not None or not can_prompt:
+    for index, proxy in enumerate(proxy_list, start=1):
+        if len(proxy_list) > 1:
+            reporter.on_status(f"Trying proxy {index}/{len(proxy_list)}")
+
+        while True:
+            downloader = engine.Downloader(
+                output_dir=args.output_dir,
+                timeout=args.timeout,
+                reporter=reporter,
+                password=password,
+                proxy=proxy,
+                overwrite=args.overwrite,
+            )
+            try:
+                result = downloader.download(link, filename=name)
+            except engine.PasswordRequired as exc:
+                if password is not None or not can_prompt:
+                    print(f"error: {exc}", file=sys.stderr)
+                    return False
+                password = getpass.getpass("Password: ")
+                if not password:
+                    print("error: a password is required for this file", file=sys.stderr)
+                    return False
+                continue
+            except engine.IncorrectPassword as exc:
+                password_attempts += 1
+                if (
+                    args.password is not None
+                    or not can_prompt
+                    or password_attempts >= 3
+                ):
+                    print(f"error: {exc}", file=sys.stderr)
+                    return False
+                print("Incorrect password, try again.", file=sys.stderr)
+                password = getpass.getpass("Password: ")
+                continue
+            except (engine.LinkUnavailable, engine.DestinationExists) as exc:
                 print(f"error: {exc}", file=sys.stderr)
                 return False
-            password = getpass.getpass("Password: ")
-            if not password:
-                print("error: a password is required for this file", file=sys.stderr)
+            except engine.DownloadError as exc:
+                last_error = str(exc)
+                logging.debug("proxy attempt %s failed", index, exc_info=True)
+                break
+            except requests.RequestException as exc:
+                last_error = f"network failure while downloading {link}: {exc}"
+                logging.debug("proxy attempt %s failed", index, exc_info=True)
+                break
+            except Exception as exc:  # unexpected failures
+                print(f"error: could not download {link}: {exc}", file=sys.stderr)
+                logging.debug("download failed", exc_info=True)
                 return False
-            continue
-        except engine.IncorrectPassword as exc:
-            if args.password is not None or not can_prompt or attempt == 2:
-                print(f"error: {exc}", file=sys.stderr)
-                return False
-            print("Incorrect password, try again.", file=sys.stderr)
-            password = getpass.getpass("Password: ")
-            continue
-        except engine.DownloadError as exc:
-            print(f"error: {exc}", file=sys.stderr)
-            return False
-        except requests.RequestException as exc:
-            print(f"error: network failure while downloading {link}: {exc}", file=sys.stderr)
-            logging.debug("network failure", exc_info=True)
-            return False
-        except Exception as exc:  # unexpected failures
-            print(f"error: could not download {link}: {exc}", file=sys.stderr)
-            logging.debug("download failed", exc_info=True)
-            return False
 
-        if result.skipped:
-            print(f"Already downloaded {result.path} ({convert_size(result.size)})")
-        else:
-            print(f"Saved {result.path} ({convert_size(result.size)}) in {result.elapsed:.1f}s")
-        return True
+            if result.skipped:
+                print(f"Already downloaded {result.path} ({convert_size(result.size)})")
+            else:
+                print(
+                    f"Saved {result.path} ({convert_size(result.size)}) "
+                    f"in {result.elapsed:.1f}s"
+                )
+            return True
 
+    if last_error:
+        print(f"error: {last_error}", file=sys.stderr)
+    if len(proxy_list) > 1:
+        print(f"error: all {len(proxy_list)} proxies failed for {link}", file=sys.stderr)
     return False
 
 
@@ -228,6 +299,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if args.filename and len(args.links) > 1:
         parser.error("--filename can only be used with a single link")
 
+    proxies: Optional[list[str]] = None
+    if args.proxy_file:
+        try:
+            proxies = _load_proxies(args.proxy_file)
+        except ValueError as exc:
+            parser.error(str(exc))
+    elif args.proxy:
+        proxies = [args.proxy]
+
     failures = 0
     for link in args.links:
         if not _supported_link(link):
@@ -236,10 +316,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             continue
         try:
             if args.info:
-                if not _print_info(link, args.timeout, args.proxy):
+                if not _print_info(link, args.timeout, proxies):
                     failures += 1
                 continue
-            if not _download_one(args, link, args.filename):
+            if not _download_one(args, link, args.filename, proxies):
                 failures += 1
         except KeyboardInterrupt:
             print(
