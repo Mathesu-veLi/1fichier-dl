@@ -51,6 +51,26 @@ def test_make_session_stores_affiliate_cookie():
     assert session.cookies.get("AF") == "4186346"
 
 
+def test_extract_direct_link_from_c_host():
+    html = '<html><body><a href="http://c-1.1fichier.com/c123?inline">start</a></body></html>'
+    document = engine.lxml.html.fromstring(html)
+
+    assert (
+        engine._extract_direct_link(document, html)
+        == "http://c-1.1fichier.com/c123?inline"
+    )
+
+
+def test_extract_direct_link_from_a_host():
+    html = '<html><body><a href="https://a-6.1fichier.com/p123">start</a></body></html>'
+    document = engine.lxml.html.fromstring(html)
+
+    assert (
+        engine._extract_direct_link(document, html)
+        == "https://a-6.1fichier.com/p123"
+    )
+
+
 def test_filename_from_disposition():
     assert (
         engine._filename_from_disposition('attachment; filename="movie.mkv"')

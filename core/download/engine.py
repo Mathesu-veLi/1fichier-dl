@@ -29,7 +29,8 @@ CHUNK_SIZE = 64 * 1024
 DEFAULT_TIMEOUT = 30
 
 _DIRECT_LINK_RE = re.compile(
-    r'href=["\'](https://a-\d+\.1fichier\.com/[^"\']+)["\']', re.IGNORECASE
+    r'href=["\'](https?://[a-z]-\d+\.1fichier\.com/[^"\']+)["\']',
+    re.IGNORECASE,
 )
 _SIZE_RE = re.compile(r"([\d.,]+)\s*(B|KB|MB|GB|TB)", re.IGNORECASE)
 _UNITS = {"B": 0, "KB": 1, "MB": 2, "GB": 3, "TB": 4}
